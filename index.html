@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pelis con val</title>
+<title>Pelis con Val</title>
 <style>
   :root{
     --bg:#f6f5f2;
@@ -66,6 +66,7 @@
     font-size:15px;
   }
   li:last-child{border-bottom:none;}
+  li .actions{display:flex;gap:6px;}
   li .remove{
     background:none;
     color:var(--danger);
@@ -73,7 +74,26 @@
     padding:4px 8px;
   }
   li .remove:hover{text-decoration:underline;}
+  li .seen{
+    background:none;
+    color:var(--accent);
+    font-size:13px;
+    padding:4px 8px;
+  }
+  li .seen:hover{text-decoration:underline;}
   .empty{color:var(--muted);font-size:14px;padding:12px 4px;}
+  .tabs{display:flex;gap:8px;margin-bottom:16px;}
+  .tabs button{
+    flex:1;
+    background:#fbfaf8;
+    border:1px solid var(--line);
+    color:var(--muted);
+  }
+  .tabs button.active{
+    background:var(--accent);
+    color:var(--accent-ink);
+    border-color:var(--accent);
+  }
   .status{font-size:13px;color:var(--muted);margin-top:14px;min-height:16px;}
   .status.error{color:var(--danger);}
   .setup{
@@ -97,106 +117,160 @@
 
 <script>
 const params = new URLSearchParams(window.location.search);
-const BIN_ID = params.get('bin');
-const API_KEY = params.get('key');
 const app = document.getElementById('app');
 const subtitle = document.getElementById('subtitle');
+
+let BIN_ID = params.get('bin');
+let API_KEY = params.get('key');
+
+if(BIN_ID && API_KEY){
+  localStorage.setItem('lista_bin', BIN_ID);
+  localStorage.setItem('lista_key', API_KEY);
+  history.replaceState({}, '', window.location.pathname);
+} else {
+  BIN_ID = localStorage.getItem('lista_bin');
+  API_KEY = localStorage.getItem('lista_key');
+}
 
 if(!BIN_ID || !API_KEY){
   subtitle.textContent = 'Falta configuración';
   app.innerHTML = `
     <div class="setup">
-      A esta página le falta el <code>bin</code> y/o el <code>key</code> en la URL.<br><br>
-      Usala así:<br>
-      <code>index.html?bin=TU_BIN_ID&key=TU_MASTER_KEY</code>
+      Entrá una vez con tu bin y tu clave en la URL, la página los va a recordar:<br><br>
+      <code>index.html?bin=TU_BIN_ID&key=TU_MASTER_KEY</code><br><br>
+      Después de eso, podés usar el link corto sin parámetros.
     </div>`;
 } else {
   init();
 }
 
+let activeTab = 'no_vistas';
+
 async function init(){
-  render(null, 'Cargando lista…');
+  renderLoading('Cargando lista…');
   try{
-    const data = await getList();
+    const data = await getData();
     render(data);
   }catch(e){
-    render([], '', e.message);
+    renderError(e.message);
   }
 }
 
-async function getList(){
+async function getData(){
   const res = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
     headers: { 'X-Master-Key': API_KEY }
   });
   if(!res.ok) throw new Error('No se pudo cargar la lista (revisá el bin o la clave).');
   const json = await res.json();
-  return Array.isArray(json.record?.nombres) ? json.record.nombres : [];
+  return {
+    no_vistas: Array.isArray(json.record?.no_vistas) ? json.record.no_vistas : [],
+    vistas: Array.isArray(json.record?.vistas) ? json.record.vistas : []
+  };
 }
 
-async function saveList(nombres){
+async function saveData(data){
   const res = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
       'X-Master-Key': API_KEY
     },
-    body: JSON.stringify({ nombres })
+    body: JSON.stringify(data)
   });
   if(!res.ok) throw new Error('No se pudo guardar el cambio.');
 }
 
-function render(nombres, loadingMsg, errorMsg){
-  if(errorMsg){
-    subtitle.textContent = 'Error';
-    app.innerHTML = `<div class="card"><p class="status error">${errorMsg}</p></div>`;
-    return;
-  }
-  if(nombres === null){
-    subtitle.textContent = loadingMsg;
-    app.innerHTML = `<div class="card"><p class="empty">${loadingMsg}</p></div>`;
-    return;
-  }
+function renderLoading(msg){
+  subtitle.textContent = msg;
+  app.innerHTML = `<div class="card"><p class="empty">${msg}</p></div>`;
+}
 
-  subtitle.textContent = `${nombres.length} en la lista`;
+function renderError(msg){
+  subtitle.textContent = 'Error';
+  app.innerHTML = `<div class="card"><p class="status error">${msg}</p></div>`;
+}
 
-  const items = nombres.length
-    ? nombres.map((n,i)=>`
+function render(data){
+  const list = data[activeTab];
+  subtitle.textContent = `${list.length} en "${activeTab === 'no_vistas' ? 'no vistas' : 'vistas'}"`;
+
+  const items = list.length
+    ? list.map((n,i)=>`
         <li>
           <span>${escapeHtml(n)}</span>
-          <button class="remove" data-index="${i}">Quitar</button>
+          <div class="actions">
+            ${activeTab === 'no_vistas' ? `<button class="seen" data-index="${i}">Visto</button>` : ''}
+            <button class="remove" data-index="${i}">Quitar</button>
+          </div>
         </li>`).join('')
     : `<li class="empty">Todavía no hay nada acá.</li>`;
 
   app.innerHTML = `
+    <div class="tabs">
+      <button data-tab="no_vistas" class="${activeTab==='no_vistas'?'active':''}">No vistas</button>
+      <button data-tab="vistas" class="${activeTab==='vistas'?'active':''}">Vistas</button>
+    </div>
     <div class="card">
-      <form id="add-form">
-        <input type="text" id="new-name" placeholder="Nombre nuevo" autocomplete="off" />
-        <button type="submit" class="add">Agregar</button>
-      </form>
+      ${activeTab === 'no_vistas' ? `
+        <form id="add-form">
+          <input type="text" id="new-name" placeholder="Título de la peli" autocomplete="off" />
+          <button type="submit" class="add">Agregar</button>
+        </form>` : ''}
       <ul>${items}</ul>
       <p class="status" id="status"></p>
-    </div>`;
+    </div>
+    <p class="sub" style="margin-top:14px;"><a href="#" id="forget" style="color:var(--muted);">Olvidar esta configuración</a></p>`;
 
-  document.getElementById('add-form').addEventListener('submit', async (e)=>{
+  app.querySelectorAll('.tabs button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      activeTab = btn.dataset.tab;
+      render(data);
+    });
+  });
+
+  document.getElementById('forget').addEventListener('click', (e)=>{
     e.preventDefault();
-    const input = document.getElementById('new-name');
-    const value = input.value.trim();
-    if(!value) return;
-    await withStatus(async ()=>{
-      const current = await getList();
-      current.push(value);
-      await saveList(current);
-      render(current);
-    }, 'Guardando…');
+    localStorage.removeItem('lista_bin');
+    localStorage.removeItem('lista_key');
+    window.location.reload();
+  });
+
+  const addForm = document.getElementById('add-form');
+  if(addForm){
+    addForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const input = document.getElementById('new-name');
+      const value = input.value.trim();
+      if(!value) return;
+      await withStatus(async ()=>{
+        const current = await getData();
+        current.no_vistas.push(value);
+        await saveData(current);
+        render(current);
+      }, 'Guardando…');
+    });
+  }
+
+  app.querySelectorAll('.seen').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const idx = parseInt(btn.dataset.index, 10);
+      await withStatus(async ()=>{
+        const current = await getData();
+        const [item] = current.no_vistas.splice(idx, 1);
+        if(item !== undefined) current.vistas.push(item);
+        await saveData(current);
+        render(current);
+      }, 'Marcando como vista…');
+    });
   });
 
   app.querySelectorAll('.remove').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const idx = parseInt(btn.dataset.index, 10);
       await withStatus(async ()=>{
-        const current = await getList();
-        current.splice(idx, 1);
-        await saveList(current);
+        const current = await getData();
+        current[activeTab].splice(idx, 1);
+        await saveData(current);
         render(current);
       }, 'Quitando…');
     });
