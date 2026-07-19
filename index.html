@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mi lista</title>
+<style>
+  :root{
+    --bg:#f6f5f2;
+    --card:#ffffff;
+    --ink:#1f1e1c;
+    --muted:#7a7770;
+    --line:#e6e3dc;
+    --accent:#3c5f4f;
+    --accent-ink:#ffffff;
+    --danger:#a13d3d;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+    padding:48px 16px;
+  }
+  .wrap{width:100%;max-width:520px;}
+  h1{font-size:22px;font-weight:600;margin:0 0 4px;}
+  p.sub{color:var(--muted);font-size:14px;margin:0 0 28px;}
+  .card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:20px;
+  }
+  form{display:flex;gap:8px;margin-bottom:16px;}
+  input[type=text]{
+    flex:1;
+    padding:10px 12px;
+    border:1px solid var(--line);
+    border-radius:8px;
+    font-size:15px;
+    background:#fbfaf8;
+    color:var(--ink);
+  }
+  input[type=text]:focus{outline:2px solid var(--accent);outline-offset:1px;}
+  button{
+    cursor:pointer;
+    border:none;
+    border-radius:8px;
+    font-size:15px;
+    font-weight:500;
+    padding:10px 16px;
+  }
+  button.add{background:var(--accent);color:var(--accent-ink);}
+  button.add:disabled{opacity:.5;cursor:default;}
+  ul{list-style:none;margin:0;padding:0;}
+  li{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:12px 4px;
+    border-bottom:1px solid var(--line);
+    font-size:15px;
+  }
+  li:last-child{border-bottom:none;}
+  li .remove{
+    background:none;
+    color:var(--danger);
+    font-size:13px;
+    padding:4px 8px;
+  }
+  li .remove:hover{text-decoration:underline;}
+  .empty{color:var(--muted);font-size:14px;padding:12px 4px;}
+  .status{font-size:13px;color:var(--muted);margin-top:14px;min-height:16px;}
+  .status.error{color:var(--danger);}
+  .setup{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:24px;
+    font-size:14px;
+    line-height:1.6;
+  }
+  .setup code{background:#efece5;padding:1px 5px;border-radius:4px;font-size:13px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Mi lista</h1>
+  <p class="sub" id="subtitle">Cargando…</p>
+
+  <div id="app"></div>
+</div>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const BIN_ID = params.get('bin');
+const API_KEY = params.get('key');
+const app = document.getElementById('app');
+const subtitle = document.getElementById('subtitle');
+
+if(!BIN_ID || !API_KEY){
+  subtitle.textContent = 'Falta configuración';
+  app.innerHTML = `
+    <div class="setup">
+      A esta página le falta el <code>bin</code> y/o el <code>key</code> en la URL.<br><br>
+      Usala así:<br>
+      <code>index.html?bin=TU_BIN_ID&key=TU_MASTER_KEY</code>
+    </div>`;
+} else {
+  init();
+}
+
+async function init(){
+  render(null, 'Cargando lista…');
+  try{
+    const data = await getList();
+    render(data);
+  }catch(e){
+    render([], '', e.message);
+  }
+}
+
+async function getList(){
+  const res = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
+    headers: { 'X-Master-Key': API_KEY }
+  });
+  if(!res.ok) throw new Error('No se pudo cargar la lista (revisá el bin o la clave).');
+  const json = await res.json();
+  return Array.isArray(json.record?.nombres) ? json.record.nombres : [];
+}
+
+async function saveList(nombres){
+  const res = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Master-Key': API_KEY
+    },
+    body: JSON.stringify({ nombres })
+  });
+  if(!res.ok) throw new Error('No se pudo guardar el cambio.');
+}
+
+function render(nombres, loadingMsg, errorMsg){
+  if(errorMsg){
+    subtitle.textContent = 'Error';
+    app.innerHTML = `<div class="card"><p class="status error">${errorMsg}</p></div>`;
+    return;
+  }
+  if(nombres === null){
+    subtitle.textContent = loadingMsg;
+    app.innerHTML = `<div class="card"><p class="empty">${loadingMsg}</p></div>`;
+    return;
+  }
+
+  subtitle.textContent = `${nombres.length} en la lista`;
+
+  const items = nombres.length
+    ? nombres.map((n,i)=>`
+        <li>
+          <span>${escapeHtml(n)}</span>
+          <button class="remove" data-index="${i}">Quitar</button>
+        </li>`).join('')
+    : `<li class="empty">Todavía no hay nada acá.</li>`;
+
+  app.innerHTML = `
+    <div class="card">
+      <form id="add-form">
+        <input type="text" id="new-name" placeholder="Nombre nuevo" autocomplete="off" />
+        <button type="submit" class="add">Agregar</button>
+      </form>
+      <ul>${items}</ul>
+      <p class="status" id="status"></p>
+    </div>`;
+
+  document.getElementById('add-form').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const input = document.getElementById('new-name');
+    const value = input.value.trim();
+    if(!value) return;
+    await withStatus(async ()=>{
+      const current = await getList();
+      current.push(value);
+      await saveList(current);
+      render(current);
+    }, 'Guardando…');
+  });
+
+  app.querySelectorAll('.remove').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const idx = parseInt(btn.dataset.index, 10);
+      await withStatus(async ()=>{
+        const current = await getList();
+        current.splice(idx, 1);
+        await saveList(current);
+        render(current);
+      }, 'Quitando…');
+    });
+  });
+}
+
+async function withStatus(fn, msg){
+  const statusEl = document.getElementById('status');
+  if(statusEl) statusEl.textContent = msg;
+  try{
+    await fn();
+  }catch(e){
+    const s = document.getElementById('status');
+    if(s){ s.textContent = e.message; s.classList.add('error'); }
+  }
+}
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>
